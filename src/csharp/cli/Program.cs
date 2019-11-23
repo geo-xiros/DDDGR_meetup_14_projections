@@ -131,74 +131,89 @@ namespace cli
 
     internal class BotPlayers : IProjection
     {
-        // players mapping => player_id, last_name, first_name
-        private Dictionary<string, string> _players = new Dictionary<string, string>();
-
-        // questions mapping => question_id, answear
-        //private Dictionary<string, string> _questions = new Dictionary<string, string>();
-
         // games with total answears time => game_id, answear total time 
-        private Dictionary<string, double> _games = new Dictionary<string, double>();
+        private Dictionary<string, Game> games = new Dictionary<string, Game>();
+        private Dictionary<string, Player> players = new Dictionary<string, Player>();
 
-        private Dictionary<string, string> _playerByGame = new Dictionary<string, string>();
+        public class Game
+        {
+            public double TotalAnswerTime { get; set; }
+            public bool Started { get; set; }
+            public Dictionary<string, Question> Questions { get; set; } = new Dictionary<string, Question>();
+            public IEnumerable<KeyValuePair<string, double>> TimesByPlayer
+                => Questions
+                    .Values
+                    .SelectMany(qt => qt.PlayerAnswerTime)
+                    .GroupBy(
+                        q => q.Key,
+                        q => q.Value,
+                        (q, v) => new KeyValuePair<string, double>(q, v.Sum()));
+        }
 
-        // questions asked => question_id, time started
-        private Dictionary<string, DateTime> _questionsAsked = new Dictionary<string, DateTime>();
+        public class Question
+        {
+            public DateTime AskedTime { get; set; }
+            public Dictionary<string, double> PlayerAnswerTime { get; set; } = new Dictionary<string, double>();
+        }
+
+        public class Player
+        {
+            public string FirstName { get; set; }
+            public string LastName { get; set; }
+            public override string ToString()
+            {
+                return $"{LastName} {LastName}";
+            }
+        }
 
         public void Projection(Event @event)
         {
+            Game game;
 
             switch (@event.Type)
             {
-                //case "QuestionAddedToQuiz":
-                //    _questions.Add(@event.Payload["question_id"], @event.Payload["answer"]);
-                //    break;
-
                 case "PlayerHasRegistered":
-                    _players.Add(@event.Payload["player_id"], $"{@event.Payload["last_name"]} {@event.Payload["first_name"]}");
+                    players.Add(@event.Payload["player_id"],
+                        new Player()
+                        {
+                            FirstName = @event.Payload["first_name"],
+                            LastName = @event.Payload["last_name"]
+                        });
                     break;
 
                 case "GameWasStarted":
-                    _games.Add(@event.Payload["game_id"], 0);
+                    games[@event.Payload["game_id"]] = new Game();
                     break;
+
                 case "QuestionWasAsked":
-                    _questionsAsked[@event.Payload["question_id"]] = @event.Timestamp;
+                    game = games[@event.Payload["game_id"]];
+                    game.Questions.Add(@event.Payload["question_id"],
+                        new Question() { AskedTime = @event.Timestamp });
                     break;
+
                 case "AnswerWasGiven":
-                    var gameId = @event.Payload["game_id"];
-                    var questionId = @event.Payload["question_id"];
-                    //var answer = @event.Payload["answer"];
+                    game = games[@event.Payload["game_id"]];
+                    var questionTimes = game.Questions[@event.Payload["question_id"]];
+                    var timeToAnswer = (@event.Timestamp - questionTimes.AskedTime).TotalSeconds;
 
-                    //if (_games[gameId] == -1)
-                    //{
-                    //    return;
-                    //}
-
-                    //_questions.TryGetValue(questionId, out string correctAnswer);
-
-                    //if (answer != correctAnswer)
-                    //{
-                    //    _games[gameId] = -1;
-                    //    break;
-                    //}
-
-                    if (!_questionsAsked.TryGetValue(questionId, out DateTime startTime))
+                    if (!questionTimes.PlayerAnswerTime.TryGetValue(@event.Payload["player_id"], out double playerAnswerTime))
                     {
-                        return;
+                        questionTimes.PlayerAnswerTime.Add(@event.Payload["player_id"], timeToAnswer);
+                    }
+                    else
+                    {
+                        questionTimes.PlayerAnswerTime[@event.Payload["player_id"]] += timeToAnswer;
                     }
 
-                    var answearedTime = @event.Timestamp;
-                    var dif = (answearedTime - startTime).TotalSeconds;
-
-                    _games[gameId] += dif;
-                    _playerByGame[gameId] = _players[@event.Payload["player_id"]];
                     break;
             }
         }
 
-        public string Result => string.Join(Environment.NewLine, _games
-            .Where(g => g.Value == 0)
-            .OrderBy(g => g.Value)
-            .Join(_playerByGame, g => g.Key, p => p.Key, (g, p) => $"Player {p.Value} is a bot."));
+        public string Result => string.Join(Environment.NewLine,
+            games.Values
+            .SelectMany(g => g.TimesByPlayer.Where(t => t.Value == 0).Select(t => t))
+            .Join(players, g => g.Key, p => p.Key, (g, p) => $"{g.Value} {p.Value.FirstName} {p.Value.LastName}")
+            .Distinct()
+            .OrderBy(p=>p));
     }
 }
