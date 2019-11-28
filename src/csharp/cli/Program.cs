@@ -132,7 +132,6 @@ namespace cli
 
     internal class BotPlayers : IProjection
     {
-        // games with total answears time => game_id, answear total time 
         private Dictionary<string, Player> _players = new Dictionary<string, Player>();
         private Dictionary<string, DateTime> _questionsAskedAt = new Dictionary<string, DateTime>();
 
@@ -155,30 +154,20 @@ namespace cli
 
         public void Projection(Event @event)
         {
-            string gameId = string.Empty;
-            string playerId = string.Empty;
-            string questionId = string.Empty;
-            Player player = null;
-            double totalTime = 0;
+            string PlayerId() => @event.Payload["player_id"];
+            string GameId() => @event.Payload["game_id"];
+            string QuestionId() => @event.Payload["question_id"];
 
             switch (@event.Type)
             {
                 case "PlayerHasRegistered":
-                    playerId = @event.Payload["player_id"];
-                    _players.Add(playerId,
+                    _players.Add(PlayerId(),
                         new Player(@event.Payload["first_name"],
                                    @event.Payload["last_name"]));
                     break;
 
                 case "PlayerJoinedGame":
-                    gameId = @event.Payload["game_id"];
-                    playerId = @event.Payload["player_id"];
-
-                    player = _players[playerId];
-                    if (!player.TotalTimeByGame.TryGetValue(gameId, out totalTime))
-                    {
-                        player.TotalTimeByGame.Add(gameId, 0);
-                    }
+                    _players[PlayerId()].TotalTimeByGame.Add(GameId(), -1);
                     break;
 
                 case "GameWasStarted":
@@ -188,28 +177,22 @@ namespace cli
                 case "GameWasFinished":
                     break;
                 case "QuestionWasAsked":
-                    questionId = @event.Payload["question_id"];
-                    _questionsAskedAt[questionId] = @event.Timestamp;
+                    _questionsAskedAt[QuestionId()] = @event.Timestamp;
                     break;
 
                 case "AnswerWasGiven":
-                    gameId = @event.Payload["game_id"];
-                    playerId = @event.Payload["player_id"];
-                    questionId = @event.Payload["question_id"];
+                    var player = _players[PlayerId()];
+                    var timeToAnswer = (@event.Timestamp - _questionsAskedAt[QuestionId()]).TotalSeconds;
 
-                    player = _players[playerId];
-                    player.TotalTimeByGame.TryGetValue(gameId, out totalTime);
-
-                    var questionAskedAt = _questionsAskedAt[questionId];
-                    var timeToAnswer = (@event.Timestamp - questionAskedAt).TotalSeconds;
-
-                    player.TotalTimeByGame[gameId] = totalTime + timeToAnswer;
+                    player.TotalTimeByGame.TryGetValue(GameId(), out double totalTime);
+                    player.TotalTimeByGame[GameId()] = totalTime + timeToAnswer;
 
                     break;
             }
         }
         public string Result => string.Join(Environment.NewLine,
-            _players.Values
+            _players
+                .Values
                 .Where(g => g.TotalTimeByGame.Values.Sum() == 0));
     }
 }
