@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 namespace cli
@@ -132,88 +133,83 @@ namespace cli
     internal class BotPlayers : IProjection
     {
         // games with total answears time => game_id, answear total time 
-        private Dictionary<string, Game> games = new Dictionary<string, Game>();
-        private Dictionary<string, Player> players = new Dictionary<string, Player>();
-
-        public class Game
-        {
-            public double TotalAnswerTime { get; set; }
-            public bool Started { get; set; }
-            public Dictionary<string, Question> Questions { get; set; } = new Dictionary<string, Question>();
-            public IEnumerable<KeyValuePair<string, double>> TimesByPlayer
-                => Questions
-                    .Values
-                    .SelectMany(qt => qt.PlayerAnswerTime)
-                    .GroupBy(
-                        q => q.Key,
-                        q => q.Value,
-                        (q, v) => new KeyValuePair<string, double>(q, v.Sum()));
-        }
-
-        public class Question
-        {
-            public DateTime AskedTime { get; set; }
-            public Dictionary<string, double> PlayerAnswerTime { get; set; } = new Dictionary<string, double>();
-        }
+        private Dictionary<string, Player> _players = new Dictionary<string, Player>();
+        private Dictionary<string, DateTime> _questionsAskedAt = new Dictionary<string, DateTime>();
 
         public class Player
         {
-            public string FirstName { get; set; }
-            public string LastName { get; set; }
+            public Player(string firstName, string lastName)
+            {
+                FirstName = firstName;
+                LastName = lastName;
+            }
+            public Dictionary<string, double> TotalTimeByGame { get; set; } = new Dictionary<string, double>();
+
+            public string FirstName { get; }
+            public string LastName { get; }
             public override string ToString()
             {
-                return $"{LastName} {LastName}";
+                return $"{LastName} {FirstName}";
             }
         }
 
         public void Projection(Event @event)
         {
-            Game game;
+            string gameId = string.Empty;
+            string playerId = string.Empty;
+            string questionId = string.Empty;
+            Player player = null;
+            double totalTime = 0;
 
             switch (@event.Type)
             {
                 case "PlayerHasRegistered":
-                    players.Add(@event.Payload["player_id"],
-                        new Player()
-                        {
-                            FirstName = @event.Payload["first_name"],
-                            LastName = @event.Payload["last_name"]
-                        });
+                    playerId = @event.Payload["player_id"];
+                    _players.Add(playerId,
+                        new Player(@event.Payload["first_name"],
+                                   @event.Payload["last_name"]));
+                    break;
+
+                case "PlayerJoinedGame":
+                    gameId = @event.Payload["game_id"];
+                    playerId = @event.Payload["player_id"];
+
+                    player = _players[playerId];
+                    if (!player.TotalTimeByGame.TryGetValue(gameId, out totalTime))
+                    {
+                        player.TotalTimeByGame.Add(gameId, 0);
+                    }
                     break;
 
                 case "GameWasStarted":
-                    games[@event.Payload["game_id"]] = new Game();
                     break;
-
+                case "GameWasCancelled":
+                    break;
+                case "GameWasFinished":
+                    break;
                 case "QuestionWasAsked":
-                    game = games[@event.Payload["game_id"]];
-                    game.Questions.Add(@event.Payload["question_id"],
-                        new Question() { AskedTime = @event.Timestamp });
+                    questionId = @event.Payload["question_id"];
+                    _questionsAskedAt[questionId] = @event.Timestamp;
                     break;
 
                 case "AnswerWasGiven":
-                    game = games[@event.Payload["game_id"]];
-                    var questionTimes = game.Questions[@event.Payload["question_id"]];
-                    var timeToAnswer = (@event.Timestamp - questionTimes.AskedTime).TotalSeconds;
+                    gameId = @event.Payload["game_id"];
+                    playerId = @event.Payload["player_id"];
+                    questionId = @event.Payload["question_id"];
 
-                    if (!questionTimes.PlayerAnswerTime.TryGetValue(@event.Payload["player_id"], out double playerAnswerTime))
-                    {
-                        questionTimes.PlayerAnswerTime.Add(@event.Payload["player_id"], timeToAnswer);
-                    }
-                    else
-                    {
-                        questionTimes.PlayerAnswerTime[@event.Payload["player_id"]] += timeToAnswer;
-                    }
+                    player = _players[playerId];
+                    player.TotalTimeByGame.TryGetValue(gameId, out totalTime);
+
+                    var questionAskedAt = _questionsAskedAt[questionId];
+                    var timeToAnswer = (@event.Timestamp - questionAskedAt).TotalSeconds;
+
+                    player.TotalTimeByGame[gameId] = totalTime + timeToAnswer;
 
                     break;
             }
         }
-
         public string Result => string.Join(Environment.NewLine,
-            games.Values
-            .SelectMany(g => g.TimesByPlayer.Where(t => t.Value == 0).Select(t => t))
-            .Join(players, g => g.Key, p => p.Key, (g, p) => $"{g.Value} {p.Value.FirstName} {p.Value.LastName}")
-            .Distinct()
-            .OrderBy(p=>p));
+            _players.Values
+                .Where(g => g.TotalTimeByGame.Values.Sum() == 0));
     }
 }
