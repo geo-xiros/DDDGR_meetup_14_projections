@@ -137,19 +137,26 @@ namespace cli
 
         public class Player
         {
+            public Dictionary<string, double> TotalTimeByGame { get; set; } = new Dictionary<string, double>();
+
             public Player(string firstName, string lastName)
             {
                 FirstName = firstName;
                 LastName = lastName;
             }
-            public Dictionary<string, double> TotalTimeByGame { get; set; } = new Dictionary<string, double>();
 
             public string FirstName { get; }
             public string LastName { get; }
-            public override string ToString()
+            public void UpdateTotalGameAnswerTime(string gameId, double timeToAnswer)
             {
-                return $"{LastName} {FirstName}";
+                TotalTimeByGame.TryGetValue(gameId, out double totalTime);
+                TotalTimeByGame[gameId] = totalTime + timeToAnswer;
             }
+            public override string ToString() => $"{LastName} {FirstName}";
+
+            public void JoinGame(string gameId) => TotalTimeByGame.Add(gameId, 0);
+
+            public double AnswerTotalTime => TotalTimeByGame.Values.Sum();
         }
 
         public void Projection(Event @event)
@@ -167,7 +174,7 @@ namespace cli
                     break;
 
                 case "PlayerJoinedGame":
-                    _players[PlayerId()].TotalTimeByGame.Add(GameId(), -1);
+                    _players[PlayerId()].JoinGame(GameId());
                     break;
 
                 case "GameWasStarted":
@@ -183,16 +190,13 @@ namespace cli
                 case "AnswerWasGiven":
                     var player = _players[PlayerId()];
                     var timeToAnswer = (@event.Timestamp - _questionsAskedAt[QuestionId()]).TotalSeconds;
-
-                    player.TotalTimeByGame.TryGetValue(GameId(), out double totalTime);
-                    player.TotalTimeByGame[GameId()] = totalTime + timeToAnswer;
-
+                    player.UpdateTotalGameAnswerTime(GameId(), timeToAnswer);
                     break;
             }
         }
         public string Result => string.Join(Environment.NewLine,
             _players
                 .Values
-                .Where(g => g.TotalTimeByGame.Values.Sum() == 0));
+                .Where(g => g.AnswerTotalTime == 0));
     }
 }
