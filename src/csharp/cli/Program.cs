@@ -135,9 +135,17 @@ namespace cli
         private Dictionary<string, Player> _players = new Dictionary<string, Player>();
         private Dictionary<string, DateTime> _questionsAskedAt = new Dictionary<string, DateTime>();
 
+        public class Questions : Dictionary<string, double>
+        {
+            public long QuestionsCount => this.Keys.Count();
+            public double QuestionsTime => this.Values.Sum();
+            public double AverageAnswerTime => this.Values.Average();
+        }
+
         public class Player
         {
-            public Dictionary<string, double> TotalTimeByGame { get; set; } = new Dictionary<string, double>();
+            public Dictionary<string, Questions> TotalTimeByGame { get; set; }
+                = new Dictionary<string, Questions>();
 
             public Player(string firstName, string lastName)
             {
@@ -147,16 +155,20 @@ namespace cli
 
             public string FirstName { get; }
             public string LastName { get; }
-            public void UpdateTotalGameAnswerTime(string gameId, double timeToAnswer)
+            public void UpdateTotalGameAnswerTime(string gameId, string questionId, double timeToAnswer)
             {
-                TotalTimeByGame.TryGetValue(gameId, out double totalTime);
-                TotalTimeByGame[gameId] = totalTime + timeToAnswer;
+                TotalTimeByGame.TryGetValue(gameId, out Questions questions);
+                questions.TryGetValue(questionId, out double answerTime);
+                questions[questionId] = answerTime + timeToAnswer;
             }
             public override string ToString() => $"{LastName} {FirstName}";
 
-            public void JoinGame(string gameId) => TotalTimeByGame.Add(gameId, 0);
+            public void JoinGame(string gameId) => TotalTimeByGame.Add(gameId, new Questions());
 
-            public double AnswerTotalTime => TotalTimeByGame.Values.Sum();
+            public string AverageGameAnswerTime => string.Join(", ", 
+                TotalTimeByGame.Where(t => t.Value.Count > 0).Select(t => $"{t.Value.AverageAnswerTime}"));
+            //public string QuestionsAnswered => TotalTimeByGame.Where(t => t.Value.Count > 0).Select(t => $"{t.Key} {t.Value.QuestionsCount}");
+            //public string QuestionsAnsweredTime => TotalTimeByGame.Where(t => t.Value.Count > 0).Select(t => $"{t.Key} {t.Value.QuestionsTime}");
         }
 
         public void Projection(Event @event)
@@ -186,17 +198,90 @@ namespace cli
                 case "QuestionWasAsked":
                     _questionsAskedAt[QuestionId()] = @event.Timestamp;
                     break;
-
+                case "TimerHasExpired":
                 case "AnswerWasGiven":
                     var player = _players[PlayerId()];
                     var timeToAnswer = (@event.Timestamp - _questionsAskedAt[QuestionId()]).TotalSeconds;
-                    player.UpdateTotalGameAnswerTime(GameId(), timeToAnswer);
+                    player.UpdateTotalGameAnswerTime(GameId(), QuestionId(), timeToAnswer);
                     break;
             }
         }
         public string Result => string.Join(Environment.NewLine,
-            _players
-                .Values
-                .Where(g => g.AnswerTotalTime == 0));
+            _players.Values.Where(p => p.TotalTimeByGame.Count > 0)
+                .Select(p => $"{p} => {p.AverageGameAnswerTime} "));
+        //.Where(g => g.Value.AnswerTotalTime == 0)
+        //.Select(p => p.Value.TotalTimeByGame.Count()));
     }
+
+    //internal class BotPlayers : IProjection
+    //{
+    //    private Dictionary<string, Player> _players = new Dictionary<string, Player>();
+    //    private Dictionary<string, DateTime> _questionsAskedAt = new Dictionary<string, DateTime>();
+
+    //    public class Player
+    //    {
+    //        public Dictionary<string, List<double>> TotalTimeByGame { get; set; } = new Dictionary<string, List<double>>();
+
+    //        public Player(string firstName, string lastName)
+    //        {
+    //            FirstName = firstName;
+    //            LastName = lastName;
+    //        }
+
+    //        public string FirstName { get; }
+    //        public string LastName { get; }
+    //        public void UpdateTotalGameAnswerTime(string gameId, double timeToAnswer)
+    //        {
+    //            TotalTimeByGame.TryGetValue(gameId, out List<double> questionTime);
+    //            questionTime.Add(timeToAnswer);
+    //            //TotalTimeByGame[gameId] = totalTime + timeToAnswer;
+    //        }
+    //        public override string ToString() => $"{LastName} {FirstName}";
+
+    //        public void JoinGame(string gameId) => TotalTimeByGame.Add(gameId, new List<double>());
+
+    //        public IEnumerable<double> AvegareTimePerGame => TotalTimeByGame.Where(t=>t.Value.Count>0) .Select(t=> t.Value.Average());
+    //    }
+
+    //    public void Projection(Event @event)
+    //    {
+    //        string PlayerId() => @event.Payload["player_id"];
+    //        string GameId() => @event.Payload["game_id"];
+    //        string QuestionId() => @event.Payload["question_id"];
+
+    //        switch (@event.Type)
+    //        {
+    //            case "PlayerHasRegistered":
+    //                _players.Add(PlayerId(),
+    //                    new Player(@event.Payload["first_name"],
+    //                               @event.Payload["last_name"]));
+    //                break;
+
+    //            case "PlayerJoinedGame":
+    //                _players[PlayerId()].JoinGame(GameId());
+    //                break;
+
+    //            case "GameWasStarted":
+    //                break;
+    //            case "GameWasCancelled":
+    //                break;
+    //            case "GameWasFinished":
+    //                break;
+    //            case "QuestionWasAsked":
+    //                _questionsAskedAt[QuestionId()] = @event.Timestamp;
+    //                break;
+    //            case "TimerHasExpired":
+    //            case "AnswerWasGiven":
+    //                var player = _players[PlayerId()];
+    //                var timeToAnswer = (@event.Timestamp - _questionsAskedAt[QuestionId()]).TotalSeconds;
+    //                player.UpdateTotalGameAnswerTime(GameId(), timeToAnswer);
+    //                break;
+    //        }
+    //    }
+    //    public string Result => string.Join(Environment.NewLine,
+    //        _players.Values.Where(p=>p.TotalTimeByGame.Count>0)
+    //            .Select(p => $"{p.AvegareTimePerGame.Average()} {p} "));
+    //    //.Where(g => g.Value.AnswerTotalTime == 0)
+    //    //.Select(p => p.Value.TotalTimeByGame.Count()));
+    //}
 }
